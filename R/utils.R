@@ -96,7 +96,7 @@ appendSnapshot <- function(z, targetDir) {
 }
 
 
-prepareData <- function(stsList, stsName, yr) {
+prepareDataOne <- function(yr, stsList, stsName) {
 
     # Get data
     id <- stsList[[stsName]][year==as.numeric(yr), c("id")]
@@ -168,7 +168,51 @@ prepareData <- function(stsList, stsName, yr) {
 
     # Compose result
     return(list(outDir=target, warning=warningMsg))
+}
 
+prepareData <- function(stsList, stsName, yr) {
+
+	if(length(yr) == 1) {
+		return(prepareDataOne(yr, stsList, stsName))
+	} else {
+		print("Download multiple years:")
+		print(yr)
+		combined <- lapply(yr, prepareDataOne, stsList, stsName)
+
+		# Create dir structure
+		target <- paste0(tempdir(), "/zip/", sample(10000000:99999999, 1))
+
+		# Repeat random direname until doesn't exists
+		while(dir.exists(target)){
+			target <- paste0(tempdir(), "/", sample(10000000:99999999, 1))
+		}
+		dir.create(target)
+
+		# Copy dirs and process msgs
+		msgs <- list()
+		structure <- c("input", "process", "output")
+		for(curYr in 1:length(yr)) {
+			sour <- combined[[curYr]][["outDir"]]
+			dest <- paste0(target, "/", stsName, "_", yr[[curYr]])
+			dir.create(dest)
+			lapply(paste0(sour, "/", structure), file.copy, dest, recursive = TRUE)
+			unlink(sour, recursive = TRUE)
+
+			# Process message
+			msg <- combined[[curYr]][["warning"]]
+			if(nchar(msg) > 0)
+				msgs[[curYr]] <- yr[[curYr]]
+		}
+
+		print(list.files(dest, all.files = TRUE, recursive = TRUE))
+
+		# Combine warning
+		warningMsg <- "The original project XML file contains biotic filename(s) without snapshot and therefore has been modified to use snapshots. The original project XML file have been saved in the /process directory."
+		warningMsg <- paste(warningMsg, "Affected years:", paste(msgs, collapse=", "))
+
+		# Compose result
+		return(list(outDir=target, warning=warningMsg))
+	}
 }
 
 

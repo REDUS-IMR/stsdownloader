@@ -15,18 +15,34 @@ appserver <- function(input, output, session) {
 	    }
 	})
 
+	observe({
+		if(input$allYearSelectBox == FALSE) {
+			session$sendCustomMessage(type="allYearSelect", FALSE)
+		} else {
+			session$sendCustomMessage(type="allYearSelect", TRUE)
+		}
+	})
+
 	output$downloadData <- downloadHandler(
 	    filename = function() {
-		paste0(input$dataset, "_", input$year, ".zip", sep = "")
+		if(input$allYearSelectBox) {
+			allY <- sort(unlist(STS[[input$dataset]][,"year"]))
+			paste0(input$dataset, "_", paste0(head(allY, 1), "-", tail(allY, 1)), ".zip", sep = "")
+		} else {
+			paste0(input$dataset, "_", input$year, ".zip", sep = "")
+		}
 	    },
 	    content = function(file) {
 		session$sendCustomMessage("startDownload", "")
 		p <- Progress$new()
 		p$set(value = NULL, message = "Preparing data", detail="\nThis might take a while, please wait...")
-		a1 <- input$dataset
-		a2 <- input$year
+		prepDataset <- input$dataset
+		if(input$allYearSelectBox)
+			prepYear <- sort(unlist(STS[[prepDataset]][,"year"]))
+		else
+			prepYear <- input$year
 		future({
-		    res <- prepareData(STS, a1, a2)
+		    res <- prepareData(STS, prepDataset, prepYear)
 		    res
 		}) %...>% (function(result) {
 		setwd(result$outDir)
