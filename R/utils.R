@@ -24,7 +24,8 @@ downloadEchosounder <- function(z, targetDir) {
         shipName <- tail(head(sp, 7), 1)
     }
 
-    dbShipName <- shipName
+    # Fix for broken filename (e.g., ...G+O+Sars (1))
+    shipName <- gsub("\\s+\\([0-9]+\\)", "", shipName)
 
     # Fix for GO SARS
     if (shipName == "G+O+Sars")
@@ -56,6 +57,9 @@ appendSnapshot <- function(z, targetDir) {
     }
 
     dbShipName <- shipName
+
+    # Fix for broken filename (e.g., ...G+O+Sars (1))
+    shipName <- gsub("\\s+\\([0-9]+\\)", "", shipName)
 
     # Fix for GO SARS
     if (shipName == "G+O+Sars")
