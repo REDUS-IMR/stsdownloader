@@ -66,5 +66,19 @@ appserver <- function(input, output, session) {
 	    },
 	    contentType = "application/zip"
 	)
+
+        # CHECK Portion
+        output$contents <- renderText({
+
+            # input$file1 will be NULL initially. After the user selects
+            # and uploads a file, head of that data file by default,
+            # or all rows if selected, will be shown.
+
+            req(input$file1)
+
+            output <- checkDataOne(input$file1$datapath)
+
+            output
+        })
 }
 

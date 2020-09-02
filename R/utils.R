@@ -39,6 +39,8 @@ downloadEchosounder <- function(z, targetDir) {
     doc <- read_xml(URLencode(url))
     url <- xml_text(xml_find_all(doc, "//*[local-name() = 'element'][@key='url']"))[1]
     download.file(URLencode(url), paste0(targetDir, "/input/acoustic/", z))
+
+	return(z)
 }
 
 appendSnapshot <- function(z, targetDir) {
@@ -99,16 +101,8 @@ appendSnapshot <- function(z, targetDir) {
     return(correctFile)
 }
 
-
-prepareDataOne <- function(yr, stsList, stsName) {
-
-    # Get data
-    id <- stsList[[stsName]][year==as.numeric(yr), c("id")]
-    print(id)
-
-    prefix <- "http://tomcat7.imr.no:8080/apis/nmdapi/stox/v1/"
-
-    # Create dir structure
+createTempDir <- function() {
+	# Create dir structure
     target <- paste0(tempdir(), "/zip/", sample(10000000:99999999, 1))
     
     # Repeat random direname until doesn't exists
@@ -119,6 +113,130 @@ prepareDataOne <- function(yr, stsList, stsName) {
     structure <- c("input/biotic", "input/acoustic", "process", "output")
     lapply(paste0(target, "/", structure), dir.create, recursive = TRUE)
 
+	return(target)
+
+}
+
+prepareInputFiles <- function(doc, target) {
+    # Get acoustic data filenames
+    acousticFiles <- basename(xml_text(xml_find_all(doc, "//*[local-name() = 'process'][@name='ReadAcousticXML']//*[local-name() = 'parameter'][@name]")))
+    acousticOK <- unlist(lapply(acousticFiles, function(i) try(downloadEchosounder(i, target), TRUE)))
+
+    # Get biotic data filenames
+    bioticXML <- xml_find_all(doc, "//*[local-name() = 'process'][@name='ReadBioticXML']//*[local-name() = 'parameter'][@name]")
+    bioticFiles <- basename(xml_text(bioticXML))
+
+    # Download and append snapshot
+    bioticOK <- unlist(lapply(bioticFiles, function(i) try(appendSnapshot(i, target), TRUE)))
+
+	return(list(acousticFiles=acousticFiles, acousticOK=acousticOK, bioticFiles=bioticFiles, bioticXML=bioticXML, bioticOK=bioticOK))
+}
+
+checkDataOne <- function(file) {
+
+	# Output
+	statusOutput <- list("Project file" = FALSE,
+				"Acoustic Files" = FALSE,
+				"Biotic Files" = FALSE,
+				"StoX Process" = FALSE
+				)
+	detailOutput <- statusOutput
+	stdout <- vector('character')
+	report <- NA
+
+	# Get temp directory
+    target <- createTempDir()
+
+	xmlFile <- paste0(target, "/process/project.xml")
+    file.copy(file, xmlFile)
+
+	doc <- try(read_xml(xmlFile), TRUE)
+
+	# Check Project XML
+	if(inherits(doc, "try-error")) {
+		detailOutput[["Project file"]] <- as.character(doc)
+		return(list(cbind(t(as.data.frame(statusOutput)), t(as.data.frame(detailOutput))), report, stdout))
+	} else {
+		statusOutput[["Project file"]] <- TRUE
+		detailOutput[["Project file"]] <- ""
+	}
+
+    print(doc)
+
+	# Prepare all input files
+	inputFiles <- prepareInputFiles(doc, target)
+
+	# Check biotic files
+	if (!all(inputFiles$bioticFiles == inputFiles$bioticOK)) {
+		detailOutput[["Biotic Files"]] <- paste(inputFiles$bioticFiles[which(inputFiles$bioticFiles != inputFiles$bioticOK)], collapse = "\n")
+	} else {
+		detailOutput[["Biotic Files"]] <- ""
+		statusOutput[["Biotic Files"]] <- TRUE
+	}
+
+	# Check acoustic files
+	if (!all(inputFiles$acousticFiles == inputFiles$acousticOK )) {
+		detailOutput[["Acoustic Files"]] <- paste(inputFiles$acousticFiles[which(inputFiles$acousticFiles != inputFiles$acousticOK)], collapse = "\n")
+	} else {
+		detailOutput[["Acoustic Files"]] <- ""
+		statusOutput[["Acoustic Files"]] <- TRUE
+	}
+
+
+	# Capture output
+	con    <- textConnection('stdout', 'wr', local = TRUE)
+	sink(con, type = "output")
+	sink(con, type = "message")
+
+	# Check Rstox
+	library(Rstox)
+	g <- try(getBaseline(target), TRUE)
+	bs <- try(runBootstrap(target, nboot=5, cores=1, seed=1, acousticMethod=PSU~Stratum, bioticMethod=EDSU~Stratum), TRUE)
+	im <- try(imputeByAge(target), TRUE)
+	rp <- try(getReports(target), TRUE)
+
+	print("Report content")
+	print(rp)
+
+	# End capture
+	sink(type = "message")
+	sink(type = "output")
+	close(con)
+
+	# Gather error(s)
+	stoxOut <- c("g", "bs", "im", "rp")
+	stoxErr <- stoxOut[sapply(stoxOut, function(i) {inherits(eval(parse(text = i)), "try-error")})]
+
+	if(length(stoxErr > 0)) {
+		detailOutput[["StoX Process"]] <- paste(sapply(stoxErr, function(i) as.character(eval(parse(text = i)))), collapse = "\n")
+	} else {
+		if(!is.null(rp$bootstrapImpute) && nrow(rp$bootstrapImpute$abnd) > 0) {
+			report <- rp$bootstrapImpute$abnd
+			detailOutput[["StoX Process"]] <- ""
+			statusOutput[["StoX Process"]] <- TRUE
+		} else {
+			detailOutput[["StoX Process"]] <- "Abundance results after bootstrapImpute() are empty. Something is seriously wrong!"
+		}
+	}
+
+	# Clean up
+	unlink(target, recursive = TRUE)
+
+	return(list(cbind(t(as.data.frame(statusOutput)), t(as.data.frame(detailOutput))), report, stdout))
+
+}
+
+prepareDataOne <- function(yr, stsList, stsName) {
+
+    # Get data
+    id <- stsList[[stsName]][year==as.numeric(yr), c("id")]
+    print(id)
+
+    prefix <- "http://tomcat7.imr.no:8080/apis/nmdapi/stox/v1/"
+
+	# Get temp directory
+    target <- createTempDir()
+
     oldFile <- paste0(target, "/process/project.xml")
     download.file(URLencode(paste0(prefix, id)), oldFile)
 
@@ -126,16 +244,8 @@ prepareDataOne <- function(yr, stsList, stsName) {
     #xml_ns_strip(doc)
     print(doc)
 
-    # Get acoustic data filenames
-    acousticFiles <- basename(xml_text(xml_find_all(doc, "//*[local-name() = 'process'][@name='ReadAcousticXML']//*[local-name() = 'parameter'][@name]")))
-    acousticOK <- unlist(lapply(acousticFiles, downloadEchosounder, target))
-
-    # Get biotic data filenames
-    bioticXML <- xml_find_all(doc, "//*[local-name() = 'process'][@name='ReadBioticXML']//*[local-name() = 'parameter'][@name]")
-    bioticFiles <- basename(xml_text(bioticXML))
-
-    # Append snapshot
-    bioticOK <- unlist(lapply(bioticFiles, appendSnapshot, target))
+	# Prepare all input files
+	inputFiles <- prepareInputFiles(doc, target)
 
     # Getting last modified
     currentTime <- Sys.time()
@@ -151,12 +261,12 @@ prepareDataOne <- function(yr, stsList, stsName) {
     warningMsg = ""
 
     # Check whether we modify any of the biotic filenames without snapshot
-    if (!all(bioticFiles == bioticOK)) {
+    if (!all(inputFiles$bioticFiles == inputFiles$bioticOK)) {
 
 	    warningMsg <- "The original project XML file contains biotic filename(s) without snapshot and therefore has been modified to use snapshots. The original project XML file have been saved in the /process directory."
 
 	    # Update biotic filenames in XML
-	    xml_text(bioticXML) <- paste0("input/biotic/", bioticOK)
+	    xml_text(inputFiles$bioticXML) <- paste0("input/biotic/", inputFiles$bioticOK)
 
 	    # Update timestamp
 	    xml_attr(xmlProject, "lastmodified") <- format(currentTime, "%d/%m/%y %H:%M")
