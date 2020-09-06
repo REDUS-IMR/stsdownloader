@@ -132,7 +132,38 @@ prepareInputFiles <- function(doc, target) {
 	return(list(acousticFiles=acousticFiles, acousticOK=acousticOK, bioticFiles=bioticFiles, bioticXML=bioticXML, bioticOK=bioticOK))
 }
 
-checkDataOne <- function(file) {
+#' @import xml2 data.table Rstox
+checkDataOne <- function(file, ignoreSnapshots) {
+
+	# Additional notes for detailed errors
+	noteRstox <-	"<br/><br/><i class=\"fas fa-2x fa-exclamation-circle\" style=\"color: orange\"></i> <strong>Some tips:</strong><br/>
+						<ol>
+							<li>Make sure that the <code>project.xml</code> file is pointing to the correct input file names.</li>
+							<li>Double check the <b>UseProcessData</b> parameters in the <code>project.xml</code> file. Usually these should be set as <b>true</b>.<br/>
+								Setting this as <b>false</b> can cause Rstox's baseline process to break.
+							</li>
+							<li>Double check the <code>&lt;stratumpolygon&gt;</code> section in the <code>project.xml</code> file.<br/>
+								Sometimes all or most of the <b>includeintotal</b> parameters are accicentally set to <b>false</b>.<br/>
+								This has been known to be the common cause of the empty abundance result.
+							</li>
+						</ol>
+					"
+	noteInput <- 	"<br/><br/><i class=\"fas fa-2x fa-exclamation-circle\" style=\"color: orange\"></i> <strong>Some tips:</strong><br/>
+						<ol>
+							<li>Double check the file names for errors (e.g., no trailing <b>... (1).xml</b>).</li>
+							<li>Ensure there is a valid snapshot time appended to the file names.<br/>
+								As an example, always download biotic files from the list of snapshots
+								available, such as <a href=\"https://datasetexplorer.hi.no/apps/datasetexplorer/v2/Cruises/Forskningsfartøy/2020/Johan%20Hjort_LDGJ/2020203/datatype/biotic\" target=\"_blank\">here</a>.
+							</li>
+							<li>Make sure that the <code>project.xml</code> file is pointing to the correct input files (i.e., ship name and cruise number combinations are valid).</li>
+						</ol>
+					"
+
+	makeTable <- function(statusOutput, detailOutput) {
+		x <- cbind(as.data.frame(names(statusOutput)), t(as.data.frame(statusOutput)), t(as.data.frame(detailOutput)))
+		colnames(x) <- c("Checklists", "Status", "Details")
+		return(x)
+	}
 
 	# Output
 	statusOutput <- list("Project file" = FALSE,
@@ -155,20 +186,38 @@ checkDataOne <- function(file) {
 	# Check Project XML
 	if(inherits(doc, "try-error")) {
 		detailOutput[["Project file"]] <- as.character(doc)
-		return(list(cbind(t(as.data.frame(statusOutput)), t(as.data.frame(detailOutput))), report, stdout))
+		return(list(makeTable(statusOutput, detailOutput), report, stdout))
 	} else {
 		statusOutput[["Project file"]] <- TRUE
 		detailOutput[["Project file"]] <- ""
 	}
-
-    print(doc)
 
 	# Prepare all input files
 	inputFiles <- prepareInputFiles(doc, target)
 
 	# Check biotic files
 	if (!all(inputFiles$bioticFiles == inputFiles$bioticOK)) {
-		detailOutput[["Biotic Files"]] <- paste(inputFiles$bioticFiles[which(inputFiles$bioticFiles != inputFiles$bioticOK)], collapse = "\n")
+		detailOutput[["Biotic Files"]] <- paste0("<strong>Problematic files:</strong><br/><code>", paste(inputFiles$bioticFiles[which(inputFiles$bioticFiles != inputFiles$bioticOK)], collapse = "<br/>"), "</code>", noteInput)
+
+		# If user decides to ignore biotic snapshots
+		if(ignoreSnapshots == TRUE) {
+
+			# Update biotic filenames in XML
+			xml_text(inputFiles$bioticXML) <- paste0("input/biotic/", inputFiles$bioticOK)
+
+			# Update timestamp
+			xml_attr(doc, "lastmodified") <- format(Sys.time(), "%d/%m/%y %H:%M")
+
+			# Write back xml file
+			unlink(xmlFile)
+			write_xml(doc, xmlFile)
+
+			# Use a yellow status
+			statusOutput[["Biotic Files"]] <- "<i class=\"fas fa-2x fa-exclamation-triangle\" style=\"color: orange\"></i>"
+
+			# Update information
+			detailOutput[["Biotic Files"]] <- paste0("<strong>Files added as replacement:</strong><br/><code>", paste(inputFiles$bioticOK[which(inputFiles$bioticFiles != inputFiles$bioticOK)], collapse = "<br/>"), "</code><br/>", detailOutput[["Biotic Files"]])
+		}
 	} else {
 		detailOutput[["Biotic Files"]] <- ""
 		statusOutput[["Biotic Files"]] <- TRUE
@@ -176,54 +225,54 @@ checkDataOne <- function(file) {
 
 	# Check acoustic files
 	if (!all(inputFiles$acousticFiles == inputFiles$acousticOK )) {
-		detailOutput[["Acoustic Files"]] <- paste(inputFiles$acousticFiles[which(inputFiles$acousticFiles != inputFiles$acousticOK)], collapse = "\n")
+		detailOutput[["Acoustic Files"]] <- paste0("<strong>Problematic files:</strong><br/><code>", paste(inputFiles$acousticFiles[which(inputFiles$acousticFiles != inputFiles$acousticOK)], collapse = "<br/>"), "</code>", noteInput)
 	} else {
 		detailOutput[["Acoustic Files"]] <- ""
 		statusOutput[["Acoustic Files"]] <- TRUE
 	}
 
-
-	# Capture output
-	con    <- textConnection('stdout', 'wr', local = TRUE)
-	sink(con, type = "output")
-	sink(con, type = "message")
-
 	# Check Rstox
-	library(Rstox)
-	g <- try(getBaseline(target), TRUE)
-	bs <- try(runBootstrap(target, nboot=5, cores=1, seed=1, acousticMethod=PSU~Stratum, bioticMethod=EDSU~Stratum), TRUE)
-	im <- try(imputeByAge(target), TRUE)
-	rp <- try(getReports(target), TRUE)
+	stdout <- NULL
+	rp <- list()
+	detailOutput[["StoX Process"]] <- ""
+	report <- data.frame(NULL)
+	if (requireNamespace("Rstox", quietly = FALSE)) {
 
-	print("Report content")
-	print(rp)
+		# Run Rstox
+		args <- paste0("-e 'target <-\"", target, "\";",
+				"library(Rstox);",
+				"g <- try(getBaseline(target), TRUE);",
+				"bs <- try(runBootstrap(target, nboot=5, cores=1, seed=1, acousticMethod=PSU~Stratum, bioticMethod=EDSU~Stratum), TRUE);",
+				"im <- try(imputeByAge(target), TRUE);",
+				"rp <- try(getReports(target), TRUE);",
+				"saveRDS(rp, paste0(target, \"/result.rds\"))",
+				"'")
 
-	# End capture
-	sink(type = "message")
-	sink(type = "output")
-	close(con)
+		stdout <- system2("Rscript", args = args, stdout = TRUE, stderr = TRUE)
+		print(stdout)
 
-	# Gather error(s)
-	stoxOut <- c("g", "bs", "im", "rp")
-	stoxErr <- stoxOut[sapply(stoxOut, function(i) {inherits(eval(parse(text = i)), "try-error")})]
+		# Get report result
+		rp <- readRDS(paste0(target, "/result.rds"))
 
-	if(length(stoxErr > 0)) {
-		detailOutput[["StoX Process"]] <- paste(sapply(stoxErr, function(i) as.character(eval(parse(text = i)))), collapse = "\n")
-	} else {
-		if(!is.null(rp$bootstrapImpute) && nrow(rp$bootstrapImpute$abnd) > 0) {
-			report <- rp$bootstrapImpute$abnd
-			detailOutput[["StoX Process"]] <- ""
-			statusOutput[["StoX Process"]] <- TRUE
+		# Gather report error
+		if(inherits(rp, "try-error")) {
+			detailOutput[["StoX Process"]] <- as.character(rp)
 		} else {
-			detailOutput[["StoX Process"]] <- "Abundance results after bootstrapImpute() are empty. Something is seriously wrong!"
+			if(!is.null(rp$bootstrapImpute) && nrow(rp$bootstrapImpute$abnd) > 0) {
+				report <- rp$bootstrapImpute$abnd
+				statusOutput[["StoX Process"]] <- TRUE
+			} else {
+				detailOutput[["StoX Process"]] <- paste0("<strong>No valid abundance table is produced after <code>bootstrapImpute()</code> is called. Something is seriously wrong!</strong>", noteRstox)
+			}
 		}
+	} else {
+		detailOutput[["StoX Process"]] <- "No Rstox found in R. Disabling Rstox test."
 	}
 
 	# Clean up
 	unlink(target, recursive = TRUE)
 
-	return(list(cbind(t(as.data.frame(statusOutput)), t(as.data.frame(detailOutput))), report, stdout))
-
+	return(list(makeTable(statusOutput, detailOutput), report, stdout))
 }
 
 prepareDataOne <- function(yr, stsList, stsName) {
