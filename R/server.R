@@ -4,14 +4,14 @@ appserver <- function(input, output, session) {
 	STS <- readSTS()
 
 	output$setControls <- renderUI({
-	    selectInput("dataset", "Time Series", names(STS))
+	    selectInput("dataset", "Time Series", names(STS), width="50%")
 	})
 
 	output$yearControls <- renderUI({
 	    if(!is.null(input$dataset)) {
 		years <- sort(unlist(STS[[input$dataset]][,"year"]))
 		print(as.character(years))
-		selectInput("year", "Year", as.character(years))
+		selectInput("year", "Year", as.character(years), width="50%")
 	    }
 	})
 
