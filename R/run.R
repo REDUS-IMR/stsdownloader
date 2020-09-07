@@ -2,7 +2,8 @@
 #'
 #' @param port Port Number to use
 #'
-#' @import promises future xml2 data.table shiny utils
+#' @import promises future xml2 data.table shiny Rstox utils
+#' @importFrom shinycssloaders withSpinner
 #' @export
 run <- function(port = getOption("shiny.port")) {
 

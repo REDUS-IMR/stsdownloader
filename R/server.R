@@ -4,14 +4,14 @@ appserver <- function(input, output, session) {
 	STS <- readSTS()
 
 	output$setControls <- renderUI({
-	    selectInput("dataset", "Time Series", names(STS))
+	    selectInput("dataset", "Time Series", names(STS), width="50%")
 	})
 
 	output$yearControls <- renderUI({
 	    if(!is.null(input$dataset)) {
 		years <- sort(unlist(STS[[input$dataset]][,"year"]))
 		print(as.character(years))
-		selectInput("year", "Year", as.character(years))
+		selectInput("year", "Year", as.character(years), width="50%")
 	    }
 	})
 
@@ -66,5 +66,66 @@ appserver <- function(input, output, session) {
 	    },
 	    contentType = "application/zip"
 	)
+
+        # CHECK Portion
+        data <- reactive({
+
+            # input$file1 will be NULL initially. After the user selects
+            # and uploads a file, head of that data file by default,
+            # or all rows if selected, will be shown.
+
+            req(input$file1)
+
+            output <- checkDataOne(input$file1$datapath, input$checkboxIgnore)
+
+            output
+        })
+
+		output$summary <- renderTable({
+
+			rec <- data()
+			if(is.null(rec[[1]])){
+				""
+			} else {
+				rec[[1]][["Status"]] <- ifelse(
+					rec[[1]][["Status"]] == TRUE,
+					as.character(tags$i(
+						class = "fas fa-2x fa-check-circle",
+						style = "color: green"
+					)),
+					rec[[1]][["Status"]]
+				)
+				rec[[1]][["Status"]] <- ifelse(
+					rec[[1]][["Status"]] == FALSE,
+					as.character(tags$i(
+						class = "fas fa-2x fa-times-circle",
+						style = "color: red"
+					)),
+					rec[[1]][["Status"]]
+				)
+				rec[[1]]
+			}
+		}, sanitize.text.function = function(x) x)
+
+		output$abundance <- renderTable({
+
+			rec <- data()
+			if(is.null(rec[[2]])){
+				""
+			} else {
+				rec[[2]]
+			}
+		})
+
+		output$log <- renderPrint({
+
+			rec <- data()
+			if(is.null(rec[[3]])){
+				""
+			} else {
+				rec[[3]]
+			}
+		})
+
 }
 
