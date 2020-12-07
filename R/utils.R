@@ -381,18 +381,29 @@ prepareData <- function(stsList, stsName, yr) {
 
 readSTS <- function() {
 
-src <- read_xml("http://tomcat7.imr.no:8080/apis/nmdapi/reference/v2/dataset/surveytimeseries?version=2.0")
-xml_ns_strip(src)
+    src <- read_xml("http://tomcat7.imr.no:8080/apis/nmdapi/reference/v2/dataset/surveytimeseries?version=2.0")
+    xml_ns_strip(src)
 
-stsName <- xml_text(xml_find_all(src, "//row/name"))
-stsSamples <- xml_find_all(src, "//row/cruiseSeries/cruiseSeries/samples")
+    cn <- xml_children(src)
 
-tmp <- lapply(stsSamples, function(x) lapply(xml_children(x), function(y) { z <- lapply(xml_children(y), xml_text); names(z) <- xml_name(xml_children(y)); return(z) }))
+    stsName <- list()
+    parsedSts <- list()
 
-parsedSts <- lapply(tmp, function(x) rbindlist(lapply(x, function(y) list(year=y[["sampleTime"]], id=y[["stoxProject"]]))))
-names(parsedSts) <- stsName
+    for(i in seq_along(cn)) {
+        stsName[[i]] <- xml_text(xml_child(cn[[i]], "name"))
+        xx <- xml_find_all(xml_new_root(cn[[i]]), "//row/cruiseSeries/cruiseSeries/samples")
+        yy <- lapply(xml_children(xx), function(y) {
+                z <- lapply(xml_children(y), xml_text)
+                names(z) <- xml_name(xml_children(y))
+                return(z)
+            }
+        )
+        parsedSts[[i]] <- rbindlist(lapply(yy, function(y) list(year = y[["sampleTime"]], id = y[["stoxProject"]])))
+    }
 
-return(parsedSts)
+    names(parsedSts) <- stsName
+
+    return(parsedSts)
 
 }
 
